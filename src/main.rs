@@ -1,19 +1,17 @@
 mod request;
+mod scheduler;
 
 use request::Request;
+use scheduler::Scheduler;
 
 fn main() {
-    let mut request = Request::new(1, 5);
+    let mut scheduler = Scheduler::new();
 
-    while !request.is_finished() {
-        request.step();
+    scheduler.add_request(Request::new(1, 2));
+    scheduler.add_request(Request::new(2, 4));
+    scheduler.add_request(Request::new(3, 3));
 
-        println!(
-            "Request {}: token {}",
-            request.id,
-            request.generated_tokens()
-        );
+    while scheduler.has_work() {
+        scheduler.step();
     }
-
-    println!("Request {} finished", request.id);
 }
