@@ -26,6 +26,10 @@ impl Request {
     pub fn generated_tokens(&self) -> usize {
         self.generated_tokens
     }
+
+    pub fn max_tokens(&self) -> usize {
+        self.max_tokens
+    }
 }
 
 #[cfg(test)]
