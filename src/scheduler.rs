@@ -74,6 +74,21 @@ impl Scheduler {
 
         self.active.retain(|request| !request.is_finished());
     }
+
+    pub fn cancel(&mut self, id: u64) -> bool {
+        if let Some(index) = self.active.iter().position(|request| request.id == id) {
+            let request = self.active.remove(index);
+            self.cache.release(request.max_tokens());
+            return true;
+        }
+
+        if let Some(index) = self.waiting.iter().position(|request| request.id == id) {
+            self.waiting.remove(index);
+            return true;
+        }
+
+        false
+    }
 }
 
 #[cfg(test)]
@@ -212,6 +227,64 @@ mod tests {
         assert_eq!(scheduler.cache.available(), 2);
 
         scheduler.step();
+
+        assert!(!scheduler.has_work());
+        assert_eq!(scheduler.cache.available(), 5);
+    }
+
+    #[test]
+    fn cancelling_active_request_frees_cache_for_waiting_request() {
+        let mut scheduler = Scheduler::new(2, 5);
+
+        scheduler.add_request(Request::new(1, 4)).unwrap();
+        scheduler.add_request(Request::new(2, 3)).unwrap();
+
+        scheduler.step();
+
+        assert_eq!(scheduler.cache.available(), 1);
+        assert_eq!(scheduler.waiting.len(), 1);
+
+        assert!(scheduler.cancel(1));
+
+        assert!(scheduler.active.is_empty());
+        assert_eq!(scheduler.cache.available(), 5);
+
+        scheduler.step();
+
+        assert_eq!(scheduler.active[0].id, 2);
+        assert!(scheduler.waiting.is_empty());
+        assert_eq!(scheduler.cache.available(), 2);
+    }
+
+    #[test]
+    fn cancelling_waiting_request_preserves_cache_and_queue_order() {
+        let mut scheduler = Scheduler::new(1, 10);
+
+        scheduler.add_request(Request::new(1, 4)).unwrap();
+        scheduler.add_request(Request::new(2, 2)).unwrap();
+        scheduler.add_request(Request::new(3, 2)).unwrap();
+
+        scheduler.step();
+
+        let available = scheduler.cache.available();
+
+        assert!(scheduler.cancel(2));
+
+        assert_eq!(scheduler.cache.available(), available);
+        assert_eq!(scheduler.waiting.len(), 1);
+        assert_eq!(scheduler.waiting[0].id, 3);
+    }
+
+    #[test]
+    fn cancelling_twice_does_not_release_cache_twice() {
+        let mut scheduler = Scheduler::new(1, 5);
+
+        scheduler.add_request(Request::new(1, 4)).unwrap();
+        scheduler.step();
+
+        assert!(scheduler.cancel(1));
+        assert!(!scheduler.cancel(1));
+        assert!(!scheduler.cancel(99));
 
         assert!(!scheduler.has_work());
         assert_eq!(scheduler.cache.available(), 5);
