@@ -3,6 +3,12 @@ use std::collections::VecDeque;
 use crate::kv_cache::KvCache;
 use crate::request::Request;
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum SchedulerEvent {
+    TokenGenerated { id: u64, count: usize },
+    Finished { id: u64 },
+}
+
 pub struct Scheduler {
     active: Vec<Request>,
     waiting: VecDeque<Request>,
@@ -43,7 +49,9 @@ impl Scheduler {
         !self.active.is_empty() || !self.waiting.is_empty()
     }
 
-    pub fn step(&mut self) {
+    pub fn step(&mut self) -> Vec<SchedulerEvent> {
+        let mut events = Vec::new();
+
         while self.active.len() < self.max_active {
             let Some(request) = self.waiting.front() else {
                 break;
@@ -60,19 +68,21 @@ impl Scheduler {
         for request in &mut self.active {
             request.step();
 
-            println!(
-                "Request {}: token {}",
-                request.id,
-                request.generated_tokens()
-            );
+            events.push(SchedulerEvent::TokenGenerated {
+                id: request.id,
+                count: request.generated_tokens(),
+            });
 
             if request.is_finished() {
-                println!("Request {} finished", request.id);
                 self.cache.release(request.max_tokens());
+
+                events.push(SchedulerEvent::Finished { id: request.id });
             }
         }
 
         self.active.retain(|request| !request.is_finished());
+
+        events
     }
 
     pub fn cancel(&mut self, id: u64) -> bool {
@@ -287,6 +297,24 @@ mod tests {
         assert!(!scheduler.cancel(99));
 
         assert!(!scheduler.has_work());
+        assert_eq!(scheduler.cache.available(), 5);
+    }
+
+    #[test]
+    fn final_token_event_precedes_finished_event() {
+        let mut scheduler = Scheduler::new(1, 5);
+
+        scheduler.add_request(Request::new(1, 1)).unwrap();
+
+        assert_eq!(
+            scheduler.step(),
+            vec![
+                super::SchedulerEvent::TokenGenerated { id: 1, count: 1 },
+                super::SchedulerEvent::Finished { id: 1 },
+            ]
+        );
+
+        assert!(scheduler.step().is_empty());
         assert_eq!(scheduler.cache.available(), 5);
     }
 }

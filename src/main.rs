@@ -3,7 +3,7 @@ mod request;
 mod scheduler;
 
 use request::Request;
-use scheduler::Scheduler;
+use scheduler::{Scheduler, SchedulerEvent};
 
 fn main() -> Result<(), String> {
     let mut scheduler = Scheduler::new(2, 5);
@@ -17,7 +17,17 @@ fn main() -> Result<(), String> {
     while scheduler.has_work() {
         round += 1;
         println!("Round {round}");
-        scheduler.step();
+
+        for event in scheduler.step() {
+            match event {
+                SchedulerEvent::TokenGenerated { id, count } => {
+                    println!("Request {id}: token {count}");
+                }
+                SchedulerEvent::Finished { id } => {
+                    println!("Request {id} finished");
+                }
+            }
+        }
     }
 
     Ok(())
