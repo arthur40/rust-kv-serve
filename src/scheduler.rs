@@ -1,12 +1,19 @@
 use std::collections::VecDeque;
 
+use crate::backend::{Backend, SimulatedBackend};
 use crate::kv_cache::KvCache;
 use crate::request::Request;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum SchedulerEvent {
-    TokenGenerated { id: u64, count: usize },
-    Finished { id: u64 },
+    TokenGenerated {
+        id: u64,
+        count: usize,
+        token: String,
+    },
+    Finished {
+        id: u64,
+    },
 }
 
 pub struct Scheduler {
@@ -14,6 +21,7 @@ pub struct Scheduler {
     waiting: VecDeque<Request>,
     max_active: usize,
     cache: KvCache,
+    backend: SimulatedBackend,
 }
 
 impl Scheduler {
@@ -25,6 +33,7 @@ impl Scheduler {
             waiting: VecDeque::new(),
             max_active,
             cache: KvCache::new(cache_capacity),
+            backend: SimulatedBackend,
         }
     }
 
@@ -65,18 +74,25 @@ impl Scheduler {
             self.active.push(request);
         }
 
-        for request in &mut self.active {
-            request.step();
+        if !self.active.is_empty() {
+            let tokens = self.backend.generate_batch(&self.active);
 
-            events.push(SchedulerEvent::TokenGenerated {
-                id: request.id,
-                count: request.generated_tokens(),
-            });
+            assert_eq!(tokens.len(), self.active.len());
 
-            if request.is_finished() {
-                self.cache.release(request.max_tokens());
+            for (request, token) in self.active.iter_mut().zip(tokens) {
+                request.step();
 
-                events.push(SchedulerEvent::Finished { id: request.id });
+                events.push(SchedulerEvent::TokenGenerated {
+                    id: request.id,
+                    count: request.generated_tokens(),
+                    token,
+                });
+
+                if request.is_finished() {
+                    self.cache.release(request.max_tokens());
+
+                    events.push(SchedulerEvent::Finished { id: request.id });
+                }
             }
         }
 
@@ -309,12 +325,81 @@ mod tests {
         assert_eq!(
             scheduler.step(),
             vec![
-                super::SchedulerEvent::TokenGenerated { id: 1, count: 1 },
+                super::SchedulerEvent::TokenGenerated {
+                    id: 1,
+                    count: 1,
+                    token: "token_1".to_string(),
+                },
                 super::SchedulerEvent::Finished { id: 1 },
             ]
         );
 
         assert!(scheduler.step().is_empty());
         assert_eq!(scheduler.cache.available(), 5);
+    }
+
+    #[test]
+    fn tokens_stay_with_the_correct_request_when_batch_changes() {
+        use super::SchedulerEvent::{Finished, TokenGenerated};
+
+        let mut scheduler = Scheduler::new(2, 10);
+
+        scheduler.add_request(Request::new(1, 1)).unwrap();
+        scheduler.add_request(Request::new(2, 3)).unwrap();
+        scheduler.add_request(Request::new(3, 2)).unwrap();
+
+        assert_eq!(
+            scheduler.step(),
+            vec![
+                TokenGenerated {
+                    id: 1,
+                    count: 1,
+                    token: "token_1".to_string(),
+                },
+                Finished { id: 1 },
+                TokenGenerated {
+                    id: 2,
+                    count: 1,
+                    token: "token_1".to_string(),
+                },
+            ]
+        );
+
+        assert_eq!(
+            scheduler.step(),
+            vec![
+                TokenGenerated {
+                    id: 2,
+                    count: 2,
+                    token: "token_2".to_string(),
+                },
+                TokenGenerated {
+                    id: 3,
+                    count: 1,
+                    token: "token_1".to_string(),
+                },
+            ]
+        );
+
+        assert_eq!(
+            scheduler.step(),
+            vec![
+                TokenGenerated {
+                    id: 2,
+                    count: 3,
+                    token: "token_3".to_string(),
+                },
+                Finished { id: 2 },
+                TokenGenerated {
+                    id: 3,
+                    count: 2,
+                    token: "token_2".to_string(),
+                },
+                Finished { id: 3 },
+            ]
+        );
+
+        assert!(!scheduler.has_work());
+        assert_eq!(scheduler.cache.available(), 10);
     }
 }

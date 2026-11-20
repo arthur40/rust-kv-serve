@@ -1,3 +1,4 @@
+mod backend;
 mod kv_cache;
 mod request;
 mod scheduler;
@@ -20,8 +21,8 @@ fn main() -> Result<(), String> {
 
         for event in scheduler.step() {
             match event {
-                SchedulerEvent::TokenGenerated { id, count } => {
-                    println!("Request {id}: token {count}");
+                SchedulerEvent::TokenGenerated { id, count, token } => {
+                    println!("Request {id}: token {count} = {token}");
                 }
                 SchedulerEvent::Finished { id } => {
                     println!("Request {id} finished");
