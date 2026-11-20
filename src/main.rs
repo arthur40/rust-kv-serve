@@ -6,6 +6,7 @@ mod scheduler;
 
 use std::time::Duration;
 
+use engine::EngineCommand;
 use request::Request;
 use scheduler::{Scheduler, SchedulerEvent};
 use tokio::sync::mpsc;
@@ -15,7 +16,7 @@ use tokio::time;
 async fn main() -> Result<(), String> {
     let scheduler = Scheduler::new(2, 10);
 
-    let (request_tx, request_rx) = mpsc::channel::<Request>(16);
+    let (request_tx, request_rx) = mpsc::channel::<EngineCommand>(16);
     let (event_tx, mut event_rx) = mpsc::channel::<SchedulerEvent>(32);
 
     let engine_task = tokio::spawn(engine::run(scheduler, request_rx, event_tx));
@@ -23,7 +24,7 @@ async fn main() -> Result<(), String> {
     let producer = tokio::spawn(async move {
         for (id, max_tokens) in [(1, 5), (2, 4), (3, 3)] {
             request_tx
-                .send(Request::new(id, max_tokens))
+                .send(EngineCommand::Submit(Request::new(id, max_tokens)))
                 .await
                 .map_err(|error| error.to_string())?;
 
